@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   android:
@@ -26,17 +27,33 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Start Android diagnostic log
+        run: |
+          echo "FullCleaner Android CI diagnostics" > android-ci.log
+          echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> android-ci.log
+          echo "Commit: $GITHUB_SHA" >> android-ci.log
+
       - name: Generate Android platform files
-        run: flutter create . --platforms=android --project-name full_cleaner --org com.manodigas
+        shell: bash
+        run: |
+          set -o pipefail
+          flutter create . --platforms=android --project-name full_cleaner --org com.manodigas 2>&1 | tee -a android-ci.log
 
       - name: Install FullCleaner Android bridge
+        shell: bash
         run: |
-          mkdir -p android/app/src/main/kotlin/com/manodigas/full_cleaner
-          cp tool/android/MainActivity.kt android/app/src/main/kotlin/com/manodigas/full_cleaner/MainActivity.kt
+          set -o pipefail
+          {
+            mkdir -p android/app/src/main/kotlin/com/manodigas/full_cleaner
+            cp tool/android/MainActivity.kt android/app/src/main/kotlin/com/manodigas/full_cleaner/MainActivity.kt
+            echo "Android bridge installed."
+          } 2>&1 | tee -a android-ci.log
 
       - name: Enable installed-app visibility
+        shell: bash
         run: |
-          python3 - <<'PY'
+          set -o pipefail
+          python3 - <<'PY' 2>&1 | tee -a android-ci.log
           from pathlib import Path
           manifest = Path('android/app/src/main/AndroidManifest.xml')
           text = manifest.read_text(encoding='utf-8')
@@ -47,16 +64,26 @@ jobs:
                   raise SystemExit('AndroidManifest.xml format was not recognized')
               text = text.replace(marker, marker + '\n    ' + permission, 1)
               manifest.write_text(text, encoding='utf-8')
+          print('AndroidManifest package visibility configured.')
           PY
 
       - name: Get dependencies
-        run: flutter pub get
+        shell: bash
+        run: |
+          set -o pipefail
+          flutter pub get 2>&1 | tee -a android-ci.log
 
       - name: Analyze
-        run: flutter analyze
+        shell: bash
+        run: |
+          set -o pipefail
+          flutter analyze 2>&1 | tee -a android-ci.log
 
       - name: Build APK
-        run: flutter build apk --release
+        shell: bash
+        run: |
+          set -o pipefail
+          flutter build apk --release 2>&1 | tee -a android-ci.log
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -64,6 +91,27 @@ jobs:
           name: FullCleaner-Android
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
+
+      - name: Publish Android failure diagnostics
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "## Android build failure"
+            echo
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo '```text'
+            if [ -f android-ci.log ]; then
+              tail -n 180 android-ci.log
+            else
+              echo "android-ci.log was not created; failure happened before diagnostic logging started."
+            fi
+            echo '```'
+          } > android-failure.md
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "[CI] Android build failure #$GITHUB_RUN_NUMBER" --body-file android-failure.md
 
   windows:
     name: Windows Release
