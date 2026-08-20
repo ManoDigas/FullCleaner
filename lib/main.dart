@@ -2,9 +2,12 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:installed_apps/app_info.dart';
-import 'package:installed_apps/installed_apps.dart';
 import 'package:path/path.dart' as p;
+
+import 'models/android_app_info.dart';
+import 'models/cleanup_entry.dart';
+import 'services/android_app_service.dart';
+import 'services/windows_cleanup_service.dart';
 
 void main() {
   runApp(const FullCleanerApp());
@@ -27,20 +30,6 @@ class FullCleanerApp extends StatelessWidget {
   }
 }
 
-class CleanupEntry {
-  CleanupEntry({
-    required this.path,
-    required this.reason,
-    required this.isDirectory,
-    this.selected = true,
-  });
-
-  final String path;
-  final String reason;
-  final bool isDirectory;
-  bool selected;
-}
-
 class FullCleanerHome extends StatefulWidget {
   const FullCleanerHome({super.key});
 
@@ -49,8 +38,11 @@ class FullCleanerHome extends StatefulWidget {
 }
 
 class _FullCleanerHomeState extends State<FullCleanerHome> {
-  final List<CleanupEntry> _entries = [];
-  List<AppInfo> _androidApps = [];
+  final WindowsCleanupService _windowsService = WindowsCleanupService();
+  final AndroidAppService _androidService = AndroidAppService();
+  final List<CleanupEntry> _entries = <CleanupEntry>[];
+
+  List<AndroidAppInfo> _androidApps = <AndroidAppInfo>[];
   bool _busy = false;
   String? _selectedExe;
   String _status = '';
@@ -60,7 +52,7 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('FullCleaner'),
-        actions: [
+        actions: <Widget>[
           IconButton(
             tooltip: 'Sobre',
             icon: const Icon(Icons.info_outline),
@@ -81,7 +73,7 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
   Widget _buildWindows() {
     return ListView(
       padding: const EdgeInsets.all(16),
-      children: [
+      children: <Widget>[
         _warningCard(
           'O FullCleaner mostra tudo antes de apagar. Pastas críticas do Windows são bloqueadas. '
           'Para obter o melhor resultado, desinstale o programa primeiro e depois faça a varredura de resíduos.',
@@ -90,7 +82,7 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
         Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: [
+          children: <Widget>[
             FilledButton.icon(
               onPressed: _busy ? null : _pickWindowsExecutable,
               icon: const Icon(Icons.apps),
@@ -108,15 +100,15 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
             ),
           ],
         ),
-        if (_selectedExe != null) ...[
+        if (_selectedExe != null) ...<Widget>[
           const SizedBox(height: 12),
           SelectableText('Selecionado: $_selectedExe'),
         ],
-        if (_busy) ...[
+        if (_busy) ...<Widget>[
           const SizedBox(height: 20),
           const LinearProgressIndicator(),
         ],
-        if (_status.isNotEmpty) ...[
+        if (_status.isNotEmpty) ...<Widget>[
           const SizedBox(height: 12),
           Text(_status),
         ],
@@ -129,7 +121,7 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
   Widget _buildAndroid() {
     return ListView(
       padding: const EdgeInsets.all(16),
-      children: [
+      children: <Widget>[
         _warningCard(
           'No Android, um app comum não pode entrar no armazenamento privado de outro app. '
           'O FullCleaner usa as telas oficiais do Android para limpar dados/desinstalar e só apaga arquivos que você selecionar explicitamente.',
@@ -138,7 +130,11 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
         FilledButton.icon(
           onPressed: _busy ? null : _loadAndroidApps,
           icon: const Icon(Icons.refresh),
-          label: Text(_androidApps.isEmpty ? 'Carregar aplicativos' : 'Atualizar aplicativos'),
+          label: Text(
+            _androidApps.isEmpty
+                ? 'Carregar aplicativos'
+                : 'Atualizar aplicativos',
+          ),
         ),
         const SizedBox(height: 8),
         OutlinedButton.icon(
@@ -146,21 +142,24 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
           icon: const Icon(Icons.folder_delete_outlined),
           label: const Text('Selecionar arquivos para apagar'),
         ),
-        if (_busy) ...[
+        if (_busy) ...<Widget>[
           const SizedBox(height: 16),
           const LinearProgressIndicator(),
         ],
-        if (_status.isNotEmpty) ...[
+        if (_status.isNotEmpty) ...<Widget>[
           const SizedBox(height: 12),
           Text(_status),
         ],
-        if (_entries.isNotEmpty) ...[
+        if (_entries.isNotEmpty) ...<Widget>[
           const SizedBox(height: 18),
-          const Text('Arquivos selecionados', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text(
+            'Arquivos selecionados',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 6),
           _buildEntries(),
         ],
-        if (_androidApps.isNotEmpty) ...[
+        if (_androidApps.isNotEmpty) ...<Widget>[
           const SizedBox(height: 22),
           Text(
             'Aplicativos (${_androidApps.length})',
@@ -168,11 +167,13 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
           ),
           const SizedBox(height: 8),
           ..._androidApps.map(
-            (app) => Card(
+            (AndroidAppInfo app) => Card(
               child: ListTile(
                 leading: const CircleAvatar(child: Icon(Icons.android)),
                 title: Text(app.name),
-                subtitle: Text('${app.packageName}\nVersão ${app.versionName}'),
+                subtitle: Text(
+                  '${app.packageName}\nVersão ${app.versionName.isEmpty ? 'desconhecida' : app.versionName}',
+                ),
                 isThreeLine: true,
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => _showAndroidAppActions(app),
@@ -190,7 +191,7 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
         padding: const EdgeInsets.all(14),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+          children: <Widget>[
             const Icon(Icons.shield_outlined),
             const SizedBox(width: 10),
             Expanded(child: Text(text)),
@@ -212,14 +213,20 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
+      children: <Widget>[
         ..._entries.map(
-          (entry) => CheckboxListTile(
+          (CleanupEntry entry) => CheckboxListTile(
             value: entry.selected,
             onChanged: _busy
                 ? null
-                : (value) => setState(() => entry.selected = value ?? false),
-            title: Text(p.basename(entry.path).isEmpty ? entry.path : p.basename(entry.path)),
+                : (bool? value) {
+                    setState(() => entry.selected = value ?? false);
+                  },
+            title: Text(
+              p.basename(entry.path).isEmpty
+                  ? entry.path
+                  : p.basename(entry.path),
+            ),
             subtitle: Text('${entry.reason}\n${entry.path}'),
             isThreeLine: true,
             controlAffinity: ListTileControlAffinity.leading,
@@ -231,22 +238,26 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
             backgroundColor: Theme.of(context).colorScheme.error,
             foregroundColor: Theme.of(context).colorScheme.onError,
           ),
-          onPressed: _busy || !_entries.any((e) => e.selected) ? null : _confirmAndDelete,
+          onPressed: _busy || !_entries.any((CleanupEntry e) => e.selected)
+              ? null
+              : _confirmAndDelete,
           icon: const Icon(Icons.delete_forever),
-          label: Text('Excluir selecionados (${_entries.where((e) => e.selected).length})'),
+          label: Text(
+            'Excluir selecionados (${_entries.where((CleanupEntry e) => e.selected).length})',
+          ),
         ),
       ],
     );
   }
 
   Future<void> _pickWindowsExecutable() async {
-    final result = await FilePicker.pickFiles(
+    final FilePickerResult? result = await FilePicker.platform.pickFiles(
       dialogTitle: 'Selecione o executável do aplicativo',
       type: FileType.custom,
-      allowedExtensions: const ['exe'],
+      allowedExtensions: const <String>['exe'],
       allowMultiple: false,
     );
-    final path = result?.files.single.path;
+    final String? path = result?.files.single.path;
     if (path == null) return;
 
     _selectedExe = path;
@@ -254,15 +265,19 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
   }
 
   Future<void> _pickWindowsFolder() async {
-    final path = await FilePicker.getDirectoryPath(
+    final String? path = await FilePicker.platform.getDirectoryPath(
       dialogTitle: 'Selecione a pasta do aplicativo',
     );
     if (path == null) return;
+
     _selectedExe = null;
     await _scanWindowsTarget(path);
   }
 
-  Future<void> _scanWindowsTarget(String selectedDirectory, {String? executablePath}) async {
+  Future<void> _scanWindowsTarget(
+    String selectedDirectory, {
+    String? executablePath,
+  }) async {
     setState(() {
       _busy = true;
       _status = 'Analisando locais comuns de resíduos...';
@@ -270,82 +285,22 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
     });
 
     try {
-      final tokens = <String>{
-        if (executablePath != null) p.basenameWithoutExtension(executablePath),
-        p.basename(p.normalize(selectedDirectory)),
-      }
-          .map(_cleanToken)
-          .where((value) => value.length >= 3 && !_genericNames.contains(value))
-          .toSet();
-
-      final found = <String, CleanupEntry>{};
-
-      if (!_isBlockedWindowsPath(selectedDirectory)) {
-        found[_key(selectedDirectory)] = CleanupEntry(
-          path: selectedDirectory,
-          reason: 'Pasta do aplicativo selecionada (opcional)',
-          isDirectory: true,
-          selected: false,
-        );
-      }
-
-      final env = Platform.environment;
-      final roots = <String>{
-        if (env['LOCALAPPDATA'] case final value?) value,
-        if (env['APPDATA'] case final value?) value,
-        if (env['PROGRAMDATA'] case final value?) value,
-        if (env['USERPROFILE'] case final value?) p.join(value, 'AppData', 'LocalLow'),
-      };
-
-      for (final root in roots) {
-        final directory = Directory(root);
-        if (!directory.existsSync()) continue;
-
-        for (final token in tokens) {
-          final direct = p.join(root, token);
-          final directDir = Directory(direct);
-          final directFile = File(direct);
-          if (directDir.existsSync() && !_isBlockedWindowsPath(direct)) {
-            found[_key(direct)] = CleanupEntry(
-              path: direct,
-              reason: 'Possível resíduo em ${p.basename(root)}',
-              isDirectory: true,
-            );
-          } else if (directFile.existsSync() && !_isBlockedWindowsPath(direct)) {
-            found[_key(direct)] = CleanupEntry(
-              path: direct,
-              reason: 'Possível resíduo em ${p.basename(root)}',
-              isDirectory: false,
-            );
-          }
-        }
-
-        // Varredura apenas do primeiro nível: evita buscas profundas e reduz falsos positivos.
-        try {
-          await for (final child in directory.list(followLinks: false)) {
-            final childName = _cleanToken(p.basename(child.path));
-            if (!tokens.contains(childName)) continue;
-            if (_isBlockedWindowsPath(child.path)) continue;
-            found[_key(child.path)] = CleanupEntry(
-              path: child.path,
-              reason: 'Nome correspondente encontrado em ${p.basename(root)}',
-              isDirectory: child is Directory,
-            );
-          }
-        } on FileSystemException {
-          // Alguns diretórios podem exigir privilégios maiores. Eles são ignorados.
-        }
-      }
-
+      final List<CleanupEntry> results = await _windowsService.scanTarget(
+        selectedDirectory,
+        executablePath: executablePath,
+      );
       if (!mounted) return;
       setState(() {
         _entries
           ..clear()
-          ..addAll(found.values);
+          ..addAll(results);
         _status = _entries.isEmpty
             ? 'Nenhum resíduo correspondente foi encontrado.'
             : '${_entries.length} item(ns) encontrado(s). Revise antes de excluir.';
       });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _status = 'Falha durante a análise: $error');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -356,13 +311,9 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
       _busy = true;
       _status = 'Carregando aplicativos instalados...';
     });
+
     try {
-      final apps = await InstalledApps.getInstalledApps(
-        excludeSystemApps: true,
-        excludeNonLaunchableApps: false,
-        withIcon: false,
-      );
-      apps.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      final List<AndroidAppInfo> apps = await _androidService.getInstalledApps();
       if (!mounted) return;
       setState(() {
         _androidApps = apps;
@@ -377,17 +328,17 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
   }
 
   Future<void> _pickAndroidFiles() async {
-    final result = await FilePicker.pickFiles(
+    final FilePickerResult? result = await FilePicker.platform.pickFiles(
       dialogTitle: 'Selecione arquivos para apagar',
       allowMultiple: true,
       type: FileType.any,
     );
     if (result == null) return;
 
-    final additions = result.files
-        .where((file) => file.path != null)
+    final Iterable<CleanupEntry> additions = result.files
+        .where((PlatformFile file) => file.path != null)
         .map(
-          (file) => CleanupEntry(
+          (PlatformFile file) => CleanupEntry(
             path: file.path!,
             reason: 'Arquivo autorizado pelo seletor do Android',
             isDirectory: false,
@@ -402,25 +353,30 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
     });
   }
 
-  Future<void> _showAndroidAppActions(AppInfo app) async {
+  Future<void> _showAndroidAppActions(AndroidAppInfo app) async {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
+      builder: (BuildContext sheetContext) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
+            children: <Widget>[
               Text(app.name, style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 4),
               Text(app.packageName),
               const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: () {
+                onPressed: () async {
                   Navigator.pop(sheetContext);
-                  InstalledApps.openSettings(app.packageName);
+                  try {
+                    await _androidService.openSettings(app.packageName);
+                  } catch (error) {
+                    if (!mounted) return;
+                    _showSnack('Não foi possível abrir as configurações: $error');
+                  }
                 },
                 icon: const Icon(Icons.settings),
                 label: const Text('Abrir armazenamento/configurações'),
@@ -429,17 +385,19 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
               OutlinedButton.icon(
                 onPressed: () async {
                   Navigator.pop(sheetContext);
-                  final started = await InstalledApps.uninstallApp(app.packageName);
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        started == true
-                            ? 'Pedido de desinstalação enviado ao Android.'
-                            : 'O Android não iniciou a desinstalação.',
-                      ),
-                    ),
-                  );
+                  try {
+                    final bool started =
+                        await _androidService.uninstall(app.packageName);
+                    if (!mounted) return;
+                    _showSnack(
+                      started
+                          ? 'Pedido de desinstalação enviado ao Android.'
+                          : 'O Android não iniciou a desinstalação.',
+                    );
+                  } catch (error) {
+                    if (!mounted) return;
+                    _showSnack('Falha ao iniciar a desinstalação: $error');
+                  }
                 },
                 icon: const Icon(Icons.delete_outline),
                 label: const Text('Desinstalar pelo Android'),
@@ -452,15 +410,16 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
   }
 
   Future<void> _confirmAndDelete() async {
-    final selected = _entries.where((entry) => entry.selected).toList();
-    final confirmed = await showDialog<bool>(
+    final List<CleanupEntry> selected =
+        _entries.where((CleanupEntry entry) => entry.selected).toList();
+    final bool? confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (BuildContext dialogContext) => AlertDialog(
         title: const Text('Confirmar exclusão'),
         content: Text(
           'Você selecionou ${selected.length} item(ns). Esta ação não possui botão de desfazer dentro do FullCleaner. Continuar?',
         ),
-        actions: [
+        actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
             child: const Text('Cancelar'),
@@ -480,29 +439,37 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
     });
 
     var removed = 0;
-    final failures = <String>[];
+    final List<String> failures = <String>[];
 
-    for (final entry in selected) {
-      try {
-        if (Platform.isWindows && _isBlockedWindowsPath(entry.path)) {
-          failures.add('${entry.path} (protegido)');
-          continue;
+    if (Platform.isWindows) {
+      final (int count, List<String> failed) =
+          await _windowsService.deleteEntries(selected);
+      removed = count;
+      failures.addAll(failed);
+    } else {
+      for (final CleanupEntry entry in selected) {
+        try {
+          final FileSystemEntityType type =
+              FileSystemEntity.typeSync(entry.path, followLinks: false);
+          if (type == FileSystemEntityType.directory) {
+            await Directory(entry.path).delete(recursive: true);
+          } else if (type == FileSystemEntityType.file ||
+              type == FileSystemEntityType.link) {
+            await File(entry.path).delete();
+          }
+          removed++;
+        } catch (_) {
+          failures.add(entry.path);
         }
-        final type = FileSystemEntity.typeSync(entry.path, followLinks: false);
-        if (type == FileSystemEntityType.directory) {
-          await Directory(entry.path).delete(recursive: true);
-        } else if (type == FileSystemEntityType.file || type == FileSystemEntityType.link) {
-          await File(entry.path).delete();
-        }
-        removed++;
-      } catch (_) {
-        failures.add(entry.path);
       }
     }
 
     if (!mounted) return;
     setState(() {
-      _entries.removeWhere((entry) => selected.contains(entry) && !failures.contains(entry.path));
+      _entries.removeWhere(
+        (CleanupEntry entry) =>
+            selected.contains(entry) && !failures.contains(entry.path),
+      );
       _status = failures.isEmpty
           ? '$removed item(ns) removido(s).'
           : '$removed removido(s); ${failures.length} não puderam ser removidos.';
@@ -512,81 +479,27 @@ class _FullCleanerHomeState extends State<FullCleanerHome> {
 
   Future<void> _openWindowsAppsSettings() async {
     try {
-      await Process.start('cmd', ['/c', 'start', '', 'ms-settings:appsfeatures']);
+      await _windowsService.openAppsSettings();
     } catch (_) {
       if (!mounted) return;
-      setState(() => _status = 'Não foi possível abrir as configurações do Windows.');
+      setState(() {
+        _status = 'Não foi possível abrir as configurações do Windows.';
+      });
     }
   }
 
-  bool _isBlockedWindowsPath(String target) {
-    if (!Platform.isWindows) return false;
-
-    final normalized = _key(target);
-    final env = Platform.environment;
-    final exactProtected = <String>{
-      if (env['SystemDrive'] case final value?) '$value\\',
-      if (env['SystemRoot'] case final value?) value,
-      if (env['WINDIR'] case final value?) value,
-      if (env['ProgramFiles'] case final value?) value,
-      if (env['ProgramFiles(x86)'] case final value?) value,
-      if (env['USERPROFILE'] case final value?) value,
-      if (env['LOCALAPPDATA'] case final value?) value,
-      if (env['APPDATA'] case final value?) value,
-      if (env['PROGRAMDATA'] case final value?) value,
-    }.map(_key).toSet();
-
-    if (exactProtected.contains(normalized)) return true;
-
-    final windowsRoot = env['SystemRoot'] ?? env['WINDIR'];
-    if (windowsRoot != null && _isInside(normalized, _key(windowsRoot))) return true;
-
-    final base = _cleanToken(p.basename(normalized));
-    if (_genericNames.contains(base)) return true;
-
-    return false;
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
-
-  bool _isInside(String child, String parent) {
-    final separator = Platform.pathSeparator;
-    return child == parent || child.startsWith('$parent$separator');
-  }
-
-  String _key(String value) => p.normalize(p.absolute(value)).toLowerCase();
-
-  String _cleanToken(String value) => value
-      .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9._ -]'), '')
-      .trim();
-
-  static const Set<String> _genericNames = {
-    'app',
-    'apps',
-    'application',
-    'applications',
-    'bin',
-    'common files',
-    'current',
-    'data',
-    'files',
-    'microsoft',
-    'program',
-    'program files',
-    'program files (x86)',
-    'programs',
-    'system32',
-    'windows',
-    'windowsapps',
-    'x64',
-    'x86',
-  };
 
   void _showAbout() {
     showAboutDialog(
       context: context,
       applicationName: 'FullCleaner',
-      applicationVersion: '0.1.0',
-      children: const [
+      applicationVersion: '0.1.1',
+      children: const <Widget>[
         Text(
           'Ferramenta de limpeza com revisão prévia. Não promete apagar dados fisicamente irrecuperáveis e não contorna proteções do sistema operacional.',
         ),
