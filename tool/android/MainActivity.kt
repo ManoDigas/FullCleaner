@@ -19,20 +19,19 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "listApps" -> result.success(listInstalledApps())
                     "openSettings" -> {
-                        val packageName = call.argument<String>("packageName")
-                        if (packageName.isNullOrBlank()) {
+                        val targetPackage = call.argument<String>("packageName")
+                        if (targetPackage.isNullOrBlank()) {
                             result.error("invalid_package", "Package name is required", null)
                         } else {
-                            openAppSettings(packageName)
-                            result.success(null)
+                            result.success(openAppSettings(targetPackage))
                         }
                     }
                     "uninstall" -> {
-                        val packageName = call.argument<String>("packageName")
-                        if (packageName.isNullOrBlank()) {
+                        val targetPackage = call.argument<String>("packageName")
+                        if (targetPackage.isNullOrBlank()) {
                             result.error("invalid_package", "Package name is required", null)
                         } else {
-                            result.success(startUninstall(packageName))
+                            result.success(startUninstall(targetPackage))
                         }
                     }
                     else -> result.notImplemented()
@@ -68,17 +67,31 @@ class MainActivity : FlutterActivity() {
         return result
     }
 
-    private fun openAppSettings(packageName: String) {
-        val intent = Intent(
-            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-            Uri.parse("package:$packageName")
-        )
-        startActivity(intent)
+    private fun openAppSettings(targetPackage: String): Boolean {
+        return try {
+            val intent = Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:$targetPackage")
+            )
+            startActivity(intent)
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
-    private fun startUninstall(packageName: String): Boolean {
+    @Suppress("DEPRECATION")
+    private fun startUninstall(targetPackage: String): Boolean {
         return try {
-            val intent = Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName"))
+            val intent = Intent(Intent.ACTION_UNINSTALL_PACKAGE).apply {
+                data = Uri.parse("package:$targetPackage")
+                putExtra(Intent.EXTRA_RETURN_RESULT, false)
+            }
+
+            if (intent.resolveActivity(packageManager) == null) {
+                return false
+            }
+
             startActivity(intent)
             true
         } catch (_: Exception) {
