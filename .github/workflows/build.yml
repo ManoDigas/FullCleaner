@@ -49,7 +49,7 @@ jobs:
             echo "Android bridge installed."
           } 2>&1 | tee -a android-ci.log
 
-      - name: Enable installed-app visibility
+      - name: Configure Android permissions
         shell: bash
         run: |
           set -o pipefail
@@ -57,14 +57,23 @@ jobs:
           from pathlib import Path
           manifest = Path('android/app/src/main/AndroidManifest.xml')
           text = manifest.read_text(encoding='utf-8')
-          permission = '<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />'
-          if permission not in text:
-              marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
-              if marker not in text:
-                  raise SystemExit('AndroidManifest.xml format was not recognized')
-              text = text.replace(marker, marker + '\n    ' + permission, 1)
+          marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+          if marker not in text:
+              raise SystemExit('AndroidManifest.xml format was not recognized')
+
+          permissions = [
+              '<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />',
+              '<uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />',
+          ]
+          missing = [permission for permission in permissions if permission not in text]
+          if missing:
+              text = text.replace(
+                  marker,
+                  marker + '\n    ' + '\n    '.join(missing),
+                  1,
+              )
               manifest.write_text(text, encoding='utf-8')
-          print('AndroidManifest package visibility configured.')
+          print('Android package visibility and uninstall permissions configured.')
           PY
 
       - name: Get dependencies
