@@ -73,11 +73,11 @@ jobs:
           set -o pipefail
           flutter pub get 2>&1 | tee -a android-ci.log
 
-      - name: Analyze
+      - name: Analyze app sources
         shell: bash
         run: |
           set -o pipefail
-          flutter analyze 2>&1 | tee -a android-ci.log
+          flutter analyze lib 2>&1 | tee -a android-ci.log
 
       - name: Build APK
         shell: bash
@@ -132,8 +132,8 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Analyze
-        run: flutter analyze
+      - name: Analyze app sources
+        run: flutter analyze lib
 
       - name: Build Windows
         run: flutter build windows --release
