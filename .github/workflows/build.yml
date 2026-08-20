@@ -4,11 +4,13 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main
       - 'feature/**'
   pull_request:
     branches:
       - main
+
+permissions:
+  contents: read
 
 jobs:
   android:
@@ -27,17 +29,25 @@ jobs:
       - name: Generate Android platform files
         run: flutter create . --platforms=android --project-name full_cleaner --org com.manodigas
 
-      - name: Enable installed-app visibility for GitHub build
-        shell: python
+      - name: Install FullCleaner Android bridge
         run: |
+          mkdir -p android/app/src/main/kotlin/com/manodigas/full_cleaner
+          cp tool/android/MainActivity.kt android/app/src/main/kotlin/com/manodigas/full_cleaner/MainActivity.kt
+
+      - name: Enable installed-app visibility
+        run: |
+          python3 - <<'PY'
           from pathlib import Path
           manifest = Path('android/app/src/main/AndroidManifest.xml')
           text = manifest.read_text(encoding='utf-8')
           permission = '<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />'
           if permission not in text:
               marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
-              text = text.replace(marker, marker + '\n    ' + permission)
+              if marker not in text:
+                  raise SystemExit('AndroidManifest.xml format was not recognized')
+              text = text.replace(marker, marker + '\n    ' + permission, 1)
               manifest.write_text(text, encoding='utf-8')
+          PY
 
       - name: Get dependencies
         run: flutter pub get
@@ -53,6 +63,7 @@ jobs:
         with:
           name: FullCleaner-Android
           path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
 
   windows:
     name: Windows Release
@@ -84,3 +95,4 @@ jobs:
         with:
           name: FullCleaner-Windows
           path: build/windows/x64/runner/Release/
+          if-no-files-found: error
